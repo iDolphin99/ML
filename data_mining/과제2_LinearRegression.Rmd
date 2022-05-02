@@ -1,0 +1,386 @@
+---
+title: "Linear Regression"
+author: "2018204094 박형빈"
+output: 
+  html_document:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 8
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: true
+    code_folding: "show"
+    theme: spacelab
+    highlight: pygments
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(lattice)
+library(UsingR)
+library(psych)
+library(corrplot)
+library(ggplot2)
+library(dplyr)
+library(quantable)
+library(prettyR)
+library(moments)
+library(binaryLogic)
+library(patchwork)
+library(naniar)
+library(Metrics)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br/>
+
+# Import Data
+**소비자 데이터 기반 소비 예측 경진대회**의 데이터셋(purchase.csv)을 활용, Linear Regression model을 구축하여 소비자 데이터를 바탕으로 **고객의 제품 총 소비량을 예측**하였다. 
+```{r}
+# 현재 경로를 받아서 dataset을 불러옵니다
+wd <- getwd()
+setwd(wd)
+rm(wd)
+
+purchase <- read.csv('purchase.csv', header= T, na.strings = c("", " ", NA)) # 결측치를 받아옵니다
+head(purchase)
+```
+
+<br/>
+
+# EDA
+소비자 데이터(perchase)의 전체적인 EDA 결과 요약은 다음과 같이 정리할 수 있다.  
+구체적인 EDA 과정은 코드와 주석을 통해 확인할 수 있다. 
+
+**1,108 rows X 24 cols**  
+
+**X variables** 
+
+- feature column 
+  - id 
+    - 식별자 정보는 학습에 유의하지 않으므로 제거할 예정 
+- Categorical 범주형 (실수형이 아닌)
+  - Education : 학력 (5)
+  - Marital_status : 고객 결혼 상태 (8)
+  - AcceptedCmp1: 고객이 첫 번째 캠페인에서 제안을 수락(1)/비수락(0)
+  - AcceptedCmp2: 고객이 두 번째 캠페인에서 제안을 수락(1)/비수락(0)
+  - AcceptedCmp3: 고객이 세 번째 캠페인에서 제안을 수락(1)/비수락(0)
+  - AcceptedCmp1: 고객이 네 번째 캠페인에서 제안을 수락(1)/비수락(0)
+  - AcceptedCmp1: 고객이 다섯 번째 캠페인에서 제안을 수락(1)/비수락(0)
+  - Complain : 고객이 지난 2년 동안 불만을 제기한 경우(1)/(0)
+  - Response : 고객이 마지막 캠페인에서 제안을 수락(1)/비수락(0)
+- Numerical 연속형 (실수형인)
+  - Year_Birth : 고객생년월일 
+  - Income : 고객 연간 가구 소득 
+  - Kidhome : 고객 가구의 자녀 수 
+  - Teenhome : 고객 가구의 청소년 수 
+  - year : 고객이 회사에 등록한 날짜, 년 
+  - month : 고객이 회사에 등록한 날짜, 월 
+  - day : 고객이 회사에 등록한 날짜, 일
+  - Recency : 고객의 마지막 구매 이후 일수 
+  - NumDealsPurchases : 할인된 구매 횟수 
+  - NumWebPurchases : 회사 웹사이트를 통한 구매 건수
+  - NumCatalogPurchases : 카탈로그를 사용한 구매 수 
+  - NumStorePuchases : 매장에서 직접 구매한 횟수
+  - NumWebVisitsMonth : 지난 달 회사 웹사이트 방문 횟수
+  
+**y variable**  
+
+- target : 고객의 제품 총 소비량 
+
+
+```{r}
+# 데이터의 기본 구조를 확인합니다
+str(purchase)
+```
+``` {r, warning = F}
+# 전체 결측치 비율을 확인합니다 
+# 해당 데이터에는 결측치가 존재하지 않습니다
+naniar::gg_miss_var(purchase)
+```
+``` {r}
+# 범주형 변수, 연속형 변수 각각을 확인하기 위해 data를 나누어서 EDA를 진행합니다
+# y 변수인 target은 num_data에 넣어서 임의로 진행합니다
+cat_data <- purchase[, c(3, 4, 14, 15, 16, 17, 18, 19, 20)]
+num_data <- purchase[, c(2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 21, 22, 23, 24)] 
+```
+범주형 변수, 연속형 변수로 나누어서 EDA를 진행하였다.
+``` {r, echo = F}
+# Categorical Variable EDA 
+# Ordinary, Nominal variable을 확인합니다
+apply(cat_data, MARGIN = 2, FUN = "table")
+print(paste("Education ", length(unique(cat_data$Education))))
+print(paste("Marital_Status ", length(unique(cat_data$Marital_Status))))
+print(paste("AcceptedCmp1 ", length(unique(cat_data$AcceptedCmp1))))
+print(paste("AcceptedCmp2 ", length(unique(cat_data$AcceptedCmp2))))
+print(paste("AcceptedCmp3 ", length(unique(cat_data$AcceptedCmp3))))
+print(paste("AcceptedCmp4 ", length(unique(cat_data$AcceptedCmp4))))
+print(paste("AcceptedCmp5 ", length(unique(cat_data$AcceptedCmp5))))
+print(paste("Complain ", length(unique(cat_data$Complain))))
+print(paste("Response ", length(unique(cat_data$Response))))
+```
+education(학력)을 제외한 나머지 변수들은 모두 순서성이 없는 Nominal 변수이다.  
+education variable은 순서가 있는 Ordinary 변수로 "Basic < Graduation < 2n Cycle < Master < phD"(dataset discription 참고)의 순서를 가지고 있다.  
+다행히도 education, marital 변수를 제외한 나머지 변수들은 0 or 1의 label로 이루어져 있기 때문에 특별한 전처리가 필요하지 않다. 즉, education, marital 범주형 변수에 대해서만 전처리를 진행하면 된다.  
+```{r}
+# Plotting을 위한 간단한 전처리 
+# 데이터 분석시, 범주형 변수에 대해서 factor타입으로 변환 후 모델을 구축해야 합니다
+cat_data$Marital_Status <- factor(cat_data$Marital_Status)
+cat_data$Education <- factor(cat_data$Education, levels = c("Basic", "Graduation", "2n Cycle", "Master", "PhD"))
+```
+범주형 변수들을 Bar plot을 통해 시각화 하여 각각이 가지는 분포에 대한 특징을 확인하였다. 
+Graph를 모두 확인하였지만 보고서의 분량을 감안하여 특정 변수에 대해서만 짧은 추론과 주석을 함께 작성하였다. 
+```{r}
+# 학력은 Graduation의 분포가 가장 많으며 그 이후로는 점점 증가하는 추세로 많습니다
+cat_data %>% ggplot(aes(x=Education, fill = Education)) + geom_bar()
+
+# 결혼 상태는 혼인(Married)가 가장 많으며 그 다음으로 Together, Single이 많습니다 
+# Absurd, Alone, YOLO는 매우 적은 분포를 보이며
+# 이로부터 해당 데이터셋을 제공한 판매처는 주로 가족 단위의 물건을 파는 곳이라고 추측됩니다 
+cat_data %>% ggplot(aes(x=Marital_Status, fill = Marital_Status)) + geom_bar()
+
+# 모든 캠페인 제안과 불만 제기에 대해서 1보다는 0의 값이 많습니다
+# 캠페인 제안을 수락한 건수도 적고 불만을 제기한 건수도 적다는 의미가 됩니다 
+# 오히려 수락할 경우 target에 많은 영향을 줄 수도 있을 것 같습니다 
+cat_data %>% ggplot(aes(x=AcceptedCmp1, fill = AcceptedCmp1)) + geom_bar()
+cat_data %>% ggplot(aes(x=Complain, fill = Complain)) + geom_bar()
+cat_data %>% ggplot(aes(x=Response, fill = Response)) + geom_bar()
+```
+```{r}
+# Numerical Variable EDA 
+# Correlation matrix
+num_corr <- cor(num_data, method="pearson") 
+  corrplot(num_corr,method="number",type="lower",order="hclust",tl.cex=.5, tl.col='black')
+```
+```{r, include = FALSE}
+num_corr
+```
+``` {r}
+# Histogram, Correlation, Scatter plot
+pairs.panels(num_data)
+```
+```{r}
+# more detailed Histogram
+par(mfrow=c(2,3))
+hist(num_data$target, breaks=50)
+hist(num_data$Year_Birth, breaks=10)
+hist(num_data$Income, breaks=50)
+hist(num_data$Kidhome, breaks=2)
+hist(num_data$Teenhome, breaks=2)
+hist(num_data$Recency, breaks=50)
+hist(num_data$NumDealsPurchases, breaks=10)
+hist(num_data$NumWebPurchases, breaks=10)
+hist(num_data$NumCatalogPurchases, breaks=10)
+hist(num_data$NumStorePurchases, breaks=10)
+hist(num_data$NumWebVisitsMonth, breaks=10)
+hist(num_data$day, breaks=30)
+hist(num_data$month, breaks=11)
+hist(num_data$year, breaks=2)
+```
+```{r}
+describe(num_data)
+```
+차례대로 correlation matrix, scatter plot, histogram(bar plot)을 사용하여 연속형 변수의 분포와 상관계수를 확인하였고 추가적으로 연속형 변수이기에 전반적인 통계량을 같이 확인하였다.  
+이때 각 변수들간의 0.3 이상 0.7 이하는 약한 상관관계로 보고 0.7 이상의 상관관계만 살펴보았을 때 (Income, target), (NumCatalogPurchases, target)에서 강한 상관관계를 보였고 이 밖에 y variable과의 약한 상관관계를 보이는 변수는 NumWebPurchases, NumStorePurchases, Kidhome, NumWebVisitsMonth 이다. 이는 y variable에 대한 설명력이 강한, 상대적으로 강한 변수들임을 알 수 있다.  
+y variable이 아닌 변수 간의 관계성을 보았을 때 (NumStorePurchases, NumWebPurchases), (NumWebVisitsMonth, Income), (NumStorePurchases, Income), (NumCatalogPurchases, Income), (year, month), (NumCatalogPurchases, Kidhome), (NumStorePurchases, NumCatalogPurchases), (NumWebVisitsPurchases, NumCatalogPurchases)에서 0.5이상의 상관관계를 보인다. 변수 간의 상관관계가 너무 강할때 변수 간의 독립성이 깨지면서 다중공성선문제가 발생할 수 있다. 이를 고려하여 feature selection을 진행해야 할 것이다. 
+y variable target의 분포를 확인하였을 때 정규 분포보다는 왼쪽으로 치우쳐진 형태를 보인다.  
+이 밖에 다른 연속형 변수들에 대해서도 분포가 왼쪽으로 치우쳐진 모습이 많이 보이는데 이는 수치가 큰 곳에서 이상치가 존재하거나 scale 값이 다르기 때문이므로 적절한 스케일링이 필요할 것이다. 
+
+<br/>
+
+# Preprocessing Data 
+소비자 데이터(purchase)의 전체적인 전처리 과정 요약은 다음과 같이 정리할 수 있다.  
+구체적인 전처리 과정은 코드와 주석을 통해 확인할 수 있다. 
+
+**1,108 rows X 23 cols** 
+
+- Encoding 
+  - Education : Ordinary Encoding 
+  - Marital_Status : factor -> 자동으로 dummy variable 생성
+- Standard Scaler
+  - 정규화 및 표준화 
+
+``` {r}
+# original data : purchase
+# preprocessed data : input_data - 따로 저장
+# drop unnecessary variable - id
+input_data <- cbind(cat_data, num_data)
+```
+``` {r}
+# Ordinal Encoding
+edu_ol <- factor(c(input_data$Education), levels = c("Basic", "Graduation", "2n Cycle", "Master", "PhD"))
+input_data$Education <- unclass(edu_ol)
+
+# Factor type -> auto create Dummy variable
+```
+범주형 변수는 학습 모델에 들어가기 전 숫자형 변수로 encoding 해주어야 한다. 특히 순서성이 없는 Nominal 변수에 대해서는 적절한 encoding 방식이 필요하다.  
+그리하여 Ordinary 변수인 education 변수에 대해 Ordinal Encoding을 적용하였다.  
+범주형 변수 중 순서성이 없는 Nominal 변수는 Marital.Status 하나만 존재하므로 학습 모델 구축시 자동으로 dummy variable을 생성하도록 인코딩 할 예정이다. 
+```{r}
+# y variable 과 0,1로만 이루어진 변수를 제외한 numerical 변수에 대해서 정규화 전처리를 진행
+scale_data <- subset(input_data, select = c(Year_Birth, Income, Kidhome, Teenhome, Recency, NumDealsPurchases,NumCatalogPurchases, 
+                                            NumWebPurchases, NumCatalogPurchases, NumWebVisitsMonth, day, month, year)) 
+boxplot(scale_data)
+
+# Standardization 표준화
+scale <- caret::preProcess(scale_data, method = c("center", "scale"))
+scale_data <- predict(scale, scale_data)
+boxplot(scale_data)
+
+input_data <- input_data %>% select(-Year_Birth, -Income, -Kidhome, -Teenhome, -Recency, -NumDealsPurchases, -NumCatalogPurchases, 
+                                    -NumWebPurchases, -NumCatalogPurchases, -NumWebVisitsMonth, -day, -month, -year)
+input_data <- cbind(input_data, scale_data)
+input_data$target <- as.numeric(input_data$target)
+rm(scale_data, scale)
+```
+Standardization 표준화는 중심극한 정리와 표준정규분포를 이용하여 각 변수들의 분포를 정규분포에 비슷하게 만들어준다. 해당 전처리 과정은 특히나 선형회귀, 로지스틱회귀에서 유용한 기법이다. 전처리 전, 후 과정을 Box plot을 통해 확인하였고 분포의 변화를 확인할 수 있다.
+
+<br/>
+
+
+# Modeling 
+분할한 데이터를 가지고 모든 변수들을 사용하는 모델과 Heuristic method의 feature selection을 적용한 모델들을 최종적으로 비교할 예정이다.  
+모든 모델들은 동일한 전처리 과정을 거쳤고 같은 데이터를 이용하여 학습 및 테스트 하였으며 최종적으로 4가지의 모델이 구축되었다. 각 모델의 평가지표는 다음과 같이 요약할 수 있다. 자세항 사항은 코드와 함께 밑에서 확인할 수 있다. 
+
+**Simple Logistic Linear Regression**
+
+- no feature selection, 모든 변수 활용 
+- target ~  all variable 
+- MSE   62815.47
+- RMSE    250.6301
+- MAE     168.5016
+- adj R2    0.8229
+
+**Forward Selection Logistic Linear Regression**
+
+- forward selection
+- target ~  Complain 제외 
+- MSE   63506.62
+- RMSE    252.0052
+- MAE     169.133
+- adj R2    0.8229 
+
+**Backward Elimination Logistic Linear Regression**
+
+- backward elimination 
+- target ~  AcceptedCmp1, 4, 5, NumStorePurchases, Income, Kidhome, Teenhome, Recency, NumCatalogPurchases, NumWebPurchases, NumWebVisitsMonth, day, month, year
+- MSE   63506.62
+- RMSE    252.0052
+- MAE     169.133
+- adj R2    0.8233
+
+**Stepwise Selection Logistic Linear Regression**
+
+- stepwise selection 
+- target ~  AcceptedCmp1, 4, 5, NumStorePurchases, Income, Kidhome, Teenhome, Recency, NumCatalogPurchases, NumWebPurchases, NumWebVisitsMonth, day, month, year
+- MSE   63506.62
+- RMSE    252.0052
+- MAE     169.133
+- adj R2    0.8233
+
+## Model 1 : No feature selection 
+가장 기본적인 전처리를 이정도로 진행하고 feature selection 작업을 하지 않은 채 모든 변수들을 학습하는 Multivariate Linear Regression model을 구축한다. 추후 feature selection 과정을 거친 모델과 다른 Heuristic method를 적용한 모델들을 비교할 예정이다. 
+```{r ,warning=F}
+# Training 
+model_multi <- lm(target ~ ., data =input_data)
+summary(model_multi)
+
+# MSE, RMSE, MAE
+mean(model_multi$residuals^2) 
+sqrt(mean(model_multi$residuals^2))  
+mae(input_data$target, predict(model_multi))
+``` 
+모든 변수에 대해서 p-value를 비교해보았을 때 대체적으로 유의미하게 나왔으나, education, AcceptedCmp3, AcceptedCmp2, Complain, Response, Year_Birth,Recency, NumDealsPurchases, month 변수에 대해서는 p-value 값이 1에 가까운데 이는 y 변수를 설명하는데에 유의미한 설명력을 가지고 있지 않다고 볼 수 있다. 이러한 변수들은 feature selection 과정에서 탈락될 가능성이 높다. 
+Regression 문제의 대표적인 4가지 평가 척도인 MSE(평균 제곱 오차), RMSE(평균 제곱근 오차), MAE(평균 절대 오차), adjusted R sqaure(조정된 결정 계수, 모델 적합도)로 모델의 성능을 평가하였다. 결정 계수 R2 score에 대해서는 변수의 개수가 2개 이상일 경우 변수의 개수와 관측치의 개수를 고려하여 조정된 결정 계수인 adj R2 score를 사용하는 것이 더 적절하다. 조정된 결정계수로부터 현재 모델은 82% 적합도를 보여준다. 또한 RMSE 기준 250.6301의 오차를 보여주고 있으며 해당 오차를 줄일수록 좋은 모델이 될 수 있다. 
+
+## Model 2 : Forward Selection 
+변수를 하나씩 추가해가면서 중요 변수를 선택하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training 
+model_fwd <- step(lm(target ~ 1, input_data), 
+                  direction = "forward", trace = 0,
+                  scope = formula(model_multi))
+summary(model_multi)
+
+# MSE, RMSE, MAE
+mean(model_fwd$residuals^2) 
+sqrt(mean(model_fwd$residuals^2))  
+mae(input_data$target, predict(model_fwd))
+```
+종속 변수 y에 유의미한 변수를 추가해가는 과정으로 학습모델을 구축한 결과 complain 변수가 탈락하였다.
+평가 지표를 확인하였을 때, 이전 모델과 큰 차이를 보이지는 않았다. 그러나 MSE 측면에서 691.15, RMSE 측면에서 1.3751 상승을 보이고 있고, 이 차이만큼의 오차가 더 발생했음을 의미한다. 그러나 동시에 adj R2 score가 동일하므로 모델의 성능이 더 좋다고 보기 힘들다. 
+
+## Model 3 : Backward Elimination 
+유의미하지 않은 변수를 하나씩 제거해가면서 중요 변수를 선택하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training
+model_bwd <- step(lm(target ~ ., input_data), 
+                  direction = "backward", trace = 0,
+                  scope = list(lower=target ~ 1, upper = formula(model_multi)))
+summary(model_bwd)
+
+# MSE, RMSE, MAE
+mean(model_bwd$residuals^2) 
+sqrt(mean(model_bwd$residuals^2))  
+mae(input_data$target, predict(model_bwd))
+```
+종속 변수 y에 유의미한 변수만을 남겨가는 과정으로 학습모델을 구축한 결과 9개의 변수가 탈락하였다. 앞선 Forward Selection을 이용한 모델과 동일하게 Complain 변수는 똑같이 탈락하였다. 이는 두 방식이 모두 Complain 변수에 대해 y에 대한 설명력이 없다고 판단한 것이다. 또한 9개의 변수가 탈락한 것을 보았을 때 앞선 상관계수 matrix에서 변수간의 상관관계가 높은 변수들과 겹치는 것을 알 수 있는데 이는 설명력이 비슷한 변수들은 하나의 변수만 사용하도록 탈락시킨 것으로 알 수 있다. 
+평가 지표를 확인하였을 때, 처음 모델과 큰 차이를 보이지는 않았다. 그러나 MSE 측면에서 691.15, RMSE 측면에서 1.3751 상승을 보이고 있고, 이 차이만큼의 오차가 더 발생했음을 의미한다. 학습에 사용되는 변수의 개수는 줄었지만 오차는 줄었으므로 모델의 성능이 더 좋아졌다고 볼 수 있다. 
+
+## Model 4 : Stepwise Selection 
+앞선 forward selection 과 backward elimination 방법을 번갈아가면서 수행하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training
+model_step <- step(lm(target ~ ., input_data), 
+                   direction = "both", trace = 0,
+                  scope = list(lower=target ~ 1, upper = formula(model_multi)))
+summary(model_step)
+
+# MSE, RMSE, MAE
+mean(model_step$residuals^2) 
+sqrt(mean(model_step$residuals^2))  
+mae(input_data$target, predict(model_step))
+```
+종속 변수 y에 유의미한 변수만을 남겨가는 과정으로 학습모델을 구축한 결과 Backward Elimination 선택된 변수, 최종 모델 성능이 동일한 결과를 보인다. 이로써 모든 방법론들에서 **Complain 변수를 가장 유의미하지 못한 변수로 선정하였음을 알 수 있다.** 
+
+# Evaluation 
+
+## ANOVA 
+다중 선형 회귀 모델간의 비교를 위해서 ANOVA 진행하여 분산의 차이가 있는지 가설 검정을 진행하였다. 여기서 평균을 비교하지 않고 분산을 비교한 이유는 평균이 아니라 얼마나 퍼져있는지 보는게 더 중요하기 때문이다.
+``` {r, warning=F}
+anova(model_multi, model_fwd)
+anova(model_multi, model_bwd)
+anova(model_multi, model_step)
+```
+모든 변수들을 넣었을 때와 feature selection을 통해 몇 가지 변수를 제외하고 학습한 모델간의 비교를 진행하였다. 모든 결과들에서 변수를 제거하고 학습한 모델의  p-value가 1에 가깝기 때문에 모든 feature를 학습한 모델에 비해 분산의 차이가 유의미하지 않다는 결론이 나왔다.  앞선 과정에서는 Backward elimination 방법론을 통해 구축된 모델의 최종 오차와 결정 계수상의 소폭의 성능 상승이 보였지만 이는 ANOVA 분석을 통해 유의미 하다고 할 만큼의 차이가 있음이 아님을 의미한다고 볼 수 있다. 
+
+## Plotting models 
+ANOVA 분석을 통해 feature selection을 거친 모델과 거치지 않은 모델 사이의 유의미한 성능 차이가 있지 않음을 알게되었으므로 기본 모델에 대해서 모형 진단 그래프를 시각화해보았다. 
+``` {r, warning=F}
+par(mfrow = c(2,2))
+plot(model_multi)
+``` 
+- Residuals vs Fitted 
+  - 실제값과 예측값 사이의 산점도를 보여준다
+  - 선형 회귀에서는 잔차의 평균이 0이고 분산이 일정하다는 등분산성과 정규성을 보여야 한다
+  - 모델의 예측값이 높아질수록 오차가 커지는 것을 알 수 있다 
+  - 그렇기에 오차의 분산또한 예측값이 높아질수록 커지면서 등분산성을 서서히 벗어나는 것을 알 수 있다 
+- Normal Q-Q
+  - 잔차가 정규분포를 따르는지 확인할 수 있는 차트이다 
+  - 양극단 값에 가까워질수록 오차의 정규성을 벗어나는 것으로 보여진다 
+- Scale-Location 
+  - 모델이 예측한 Y와 잔차간의 관계를 비교하는 차트이다 
+  - 역시나 앞선 차트들과 마찬가지로 예측값이 커질수록 잔차또한 커지는 것을 알 수 있다 
+  - 이는 즉 y값이 크게 예측된 관측치들에 대해서 더 큰 값으로 틀리고 있다라고 해석가능하다 
+  - 앞선 3개의 그래프로부터 예측값이 커질수록 잔차가 커지는 것을 확인, 이는 모델에 의해 설명되지 않는 관측치 또는 이상치(outlier)가 있을것이라는 추론으로 이어진다 
+- Residuals vs Leverage 
+  - 독립변수 중 극단적으로 치우처져 있는 것을 확인하는 차트이다 
+  - 극단값, 이상치를 걸러내는데 유의미하다 
+  
+최종적으로 모델의 성능을 높이기 위해서는 데이터에 숨어있는 outlier를 제거하는 것이 중요할 것이라 추론된다. 또한 해당 데이터 셋에 한해서는 feature selection을 거친다고 해서 무조건적인 유의미한 성능 향상으로는 이어지지 않을 것이며, ANOVA 분석 결과 유의미한 차이가 보이지 않기 때문에 만약 일반화 성능을 좀 더 추구한다면 Backward Elimiantion 방법을 통해 변수 선택을 진행하는 것이 더 좋을 것이라고 여겨진다. 
+  
+``` {r}
+# 눈에 띄는 극단값이 존재함을 Cook's distance를 통해 다시 한 번 확인 가능 
+plot(model_multi, which=4)
+```

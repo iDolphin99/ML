@@ -1,0 +1,427 @@
+---
+title: "Logistic Regression"
+author: "2018204094 박형빈"
+output: 
+  html_document:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 8
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: true
+    code_folding: "show"
+    theme: spacelab
+    highlight: pygments
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(lattice)
+library(UsingR)
+library(psych)
+library(corrplot)
+library(ggplot2)
+library(dplyr)
+library(quantable)
+library(prettyR)
+library(moments)
+library(binaryLogic)
+library(patchwork)
+library(naniar)
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br/>
+
+# Import Data
+**인구 데이터 기반 소득 예측 경진대회 데이터**인 데이터셋(income.csv)을 활용, Logistic Regression model을 구축하여 인구 데이터를 바탕으로 **소득이 5만달러 초과(1)인지 이하(0)인지 분류**하였다. 
+```{r}
+# 현재 경로를 받아서 dataset을 불러옵니다
+wd <- getwd()
+setwd(wd)
+rm(wd)
+
+income <- read.csv('income.csv', header= T, na.strings = c("", " ", NA)) # 결측치를 받아옵니다
+head(income)
+```
+<br/>
+
+# EDA
+인구 데이터(income)의 전체적인 EDA 결과 요약은 다음과 같이 정리할 수 있다.  
+구체적인 EDA 과정은 코드와 주석을 통해 확인할 수 있다. 
+
+**17,480 rows X 16 cols**  
+
+**X variables** 
+
+- feature column 
+  - id 
+    - 식별자 정보는 학습에 유의하지 않으므로 제거할 예정 
+- Categorical 범주형 (실수형이 아닌)
+  - workclass : 일 유형 (9)
+  - education : 교육수준 (16)
+  - education : 교육수준 번호 
+    - EDA 결과 교육수준 변수를 숫자값으로 mapping 한 것이 교육수준 번호 변수임을 확인, 해당 변수를 대신 제거할 예정
+  - marital.status : 결혼 상태 (7)
+  - occupation : 직업 (15)
+  - relationship : 가족관계 (6)
+  - race : 인종 (5)
+  - sex : 성별 (2)
+  - native.country : 본 국적 (42)
+- Numerical 연속형 (실수형인)
+  - age : 나이 
+  - fnlwgt : CPS(Current Population Survey)가중치
+  - capital.gain : 자본 이익 
+  - capital.loss : 자본 손실
+  - hours.per.week : 주당 근무시간
+  
+**y variable**  
+
+- target : 소득 
+  - 0 : 5만 달러 이하 (50k<=)
+  - 1 : 5만 달러 초과 (>50k)
+  - label이 [0,1]로 되어 있는 Binary Classification 문제로 생각할 수 있다
+  
+
+```{r}
+# 데이터의 기본 구조를 확인합니다
+str(income)
+```
+``` {r, warning = F}
+# 전체 결측치 비율을 확인합니다 
+# occupation, workclass, native.country에 결측치가 존재합니다 
+naniar::gg_miss_var(income)
+```
+``` {r}
+# 범주형 변수, 연속형 변수 각각을 확인하기 위해 data를 나누어서 EDA를 진행합니다
+# y variable인 target은 양쪽 모두에 넣어주고 확인합니다
+cat_data <- income[, c(3,5,6,7,8,9,10,11,15,16)]
+num_data <- income[, c(2,4,12,13,14,16)] 
+```
+범주형 변수, 연속형 변수로 나누어서 EDA를 진행하였다.
+``` {r, echo = F}
+# Categorical Variable EDA 
+# Ordinary, Nominal variable을 확인합니다
+apply(cat_data, MARGIN = 2, FUN = "table")
+print(paste("workclss ", length(unique(cat_data$workclass))))
+print(paste("education ", length(unique(cat_data$education.num))))
+print(paste("occupation ", length(unique(cat_data$occupation))))
+print(paste("relationshiop ", length(unique(cat_data$relationship))))
+print(paste("race ", length(unique(cat_data$race))))
+print(paste("sex ", length(unique(cat_data$sex))))
+print(paste("native.country ", length(unique(cat_data$native.country))))
+```
+education(교육수준)을 제외한 나머지 변수들은 모두 순서성이 없는 Nominal 변수이다.  
+education variable은 순서가 있는 Ordinary 변수로 "Preschool < 1st-4th < 5th-6th < 7th-8th < 9th < 10th < 11th < 12th < HS-grad < Prof-school < Assoc-acdm < Assoc-voc < Some-college < Bachelors < Masters < Doctorate"(dataset discription 참고)의 순서를 가지고 있다.  
+```{r}
+# education 변수를 Label Encoding 한 후 
+# education 변수와 education.num 변수의 차이를 확인합니다
+edu_le <- as.numeric(factor(income$education, levels = unique(income$education)))
+table(edu_le)
+table(income$education.num)
+rm(edu_le)
+```
+education 변수를 Label Encoding 한 후 education.num 변수와 비교해 본 결과 동일하였고  
+education 변수를 대신 사용하고(Ordinary labeling) 전처리 시 education.num 변수는 제거할 것이다.
+```{r}
+# Plotting을 위한 간단한 전처리 
+# 데이터 분석시, 범주형 변수에 대해서 factor타입으로 변환 후 모델을 구축해야 합니다
+cat_data <- subset(cat_data, select = -education.num)
+cat_data$workclass <- factor(cat_data$workclass)
+cat_data$education <- factor(cat_data$education, levels = c("Preschool", "1st-4th", "5th-6th", "7th-8th", "9th", "10th", "11th", "12th", 
+  "HS-grad", "Prof-school", "Assoc-acdm", "Assoc-voc", "Some-college", "Bachelors", "Masters", "Doctorate"))
+cat_data$marital.status <- factor(cat_data$marital.status)
+cat_data$occupation <- factor(cat_data$occupation)
+cat_data$relationship <- factor(cat_data$relationship)
+cat_data$native.country <- factor(cat_data$native.country)
+cat_data$race <- factor(cat_data$race)
+cat_data$sex <- factor(cat_data$sex)
+```
+범주형 변수들을 시각화 하여 확인, 최종적으로 눈에 띄는 특징 몇 가지만 기록하였다.
+```{r}
+# 학력은 높을 수록, 특히나 some college 이상부터는 y 변수에 영향을 많이 주는 것 같습니다
+cat_data %>% ggplot(aes(x=target, fill = education)) + geom_bar()
+cat_data %>% ggplot(aes(x=education, fill = education)) + geom_bar()
+
+# 결혼 상태는 Married-civ-spouse과 같은 class는 수익에 많은 영향을 주는 것 같으며
+# Never-married는 오히려 수익을 낮추는 영향을 주는 것 같습니다
+cat_data %>% ggplot(aes(x=target, fill = marital.status)) + geom_bar()
+cat_data %>% ggplot(aes(x=marital.status, fill = marital.status)) + geom_bar()
+
+# 인종은 white가 압도적으로 분포가 많습니다 
+# 그 다음으로 Black이 많은데 y 변수와의 관계성에서는 대체로 수익을 낮게 벌고 있습니다 
+cat_data %>% ggplot(aes(x=target, fill = race)) + geom_bar()
+cat_data %>% ggplot(aes(x=race, fill = race)) + geom_bar()
+```
+범주형 변수들에 대해 각각이 가지는 class별 분포와 y 변수와의 관계를 확인하기 위해 Bar plot을 확인하였다.  
+Graph를 모두 확인하였지만 보고서의 분량을 감안하여 특정 3개의 변수에 대해서 짧은 추론을 주석과 함께 작성하였다. 
+```{r}
+# Numerical Variable EDA 
+# Correlation matrix
+num_corr <- cor(num_data, method="pearson") 
+corrplot(num_corr,method="number",type="lower",order="hclust",tl.cex=.8, tl.col='black')
+```
+```{r, include = FALSE}
+rm(num_corr)
+```
+``` {r}
+# Histogram, Correlation, Scatter plot
+pairs.panels(num_data)
+```
+```{r}
+# more detailed Histogram
+par(mfrow=c(2,3))
+hist(income$target, breaks=50)
+hist(income$age, breaks=50)
+hist(income$hours.per.week, breaks=50)
+hist(income$capital.gain, breaks=50)
+hist(income$capital.loss, breaks=50)
+hist(income$fnlwgt, breaks=50)
+```
+```{r}
+describe(num_data)
+```
+차례대로 correlation matrix, scatter plot, histogram(bar plot)을 사용하여 연속형 변수의 분포와 상관계수를 확인하였고 추가적으로 연속형 변수이기에 전반적인 통계량을 같이 확인하였다.  
+이때 각 변수들간의 0.3 이상의 상관관계도 보이지 않으므로 해당 변수들간의 다중공선성 문제는 보이지 않을 것으로 예상된다. 이는 각각의 변수가 독립적인 특성이 크고 그렇다면 최종 모델을 구축할 때 feature selection의 역할이 크지 않을 것으로 예상된다. 
+target 변수의 분포를 보면 5만 달러 이하의 사람들(label 0)이 더 많음을 알 수 있다.
+capital.gain, capital.loss, fnlwgt의 분포를 보았을 때 skewness가 크게 느껴지며 편차가 클 것으로 예상되는데 실제 통계량도 그러하였고, 가격/돈과 관련된 변수이기 때문에 사람들마다 큰 편차를 보이는 것으로 추정된다.   
+각 5개의 변수에 대해서 나이, 돈, 가중치의 스케일을 가지므로 적절한 스케일링을 적용해보고 성능에 차이를 비교해보아야 할 것이다. 
+
+<br/>
+
+# Preprocessing Data 
+인구 데이터(income)의 전체적인 전처리 과정 요약은 다음과 같이 정리할 수 있다.  
+구체적인 전처리 과정은 코드와 주석을 통해 확인할 수 있다. 
+
+**17,480 rows X 16 cols** 
+**15,081 rows X 30 cols**  
+
+- 결측치 처리  
+  - 단순 대치법 : 결측치가 보이는 관측치 제거 
+  - 4,262개의 관측치 삭제 
+- Encoding 
+  - education : Ordinary Encoding 
+  - workclass ~ native.country (7) : factor -> 자동으로 dummy variable 생성
+  - Binary Encoding 시도 -> ACC 하락 및 p-value 상 유의미하지 않은 결과로 인해 철회
+- Standard Scaler
+  - 정규화 및 표준화 
+
+``` {r}
+# original data : income 
+# preprocessed data : input_data - 따로 저장
+# drop unnecessary variable - id, education.num 
+cat_data <- subset(cat_data, select = -target)
+input_data <- cbind(cat_data, num_data)
+
+# remove missing values -> 15,081 rows x 14 cols
+input_data <- na.omit(input_data)
+str(input_data)
+```
+``` {r}
+# Ordinal Encoding
+edu_ol <- factor(c(input_data$education), levels = c("Preschool", "1st-4th", "5th-6th", "7th-8th", "9th", "10th", "11th", "12th", 
+  "HS-grad", "Prof-school", "Assoc-acdm", "Assoc-voc", "Some-college", "Bachelors", "Masters", "Doctorate"))
+input_data$education <- unclass(edu_ol)
+
+# Binary Encoding -> XXX 
+
+# Factor type -> auto create Dummy variable
+```
+범주형 변수는 학습 모델에 들어가기 전 숫자형 변수로 encoding 해주어야 한다. 특히 순서성이 없는 Nominal 변수에 대해서는 적절한 encoding 방식이 필요하다.  
+그리하여 Ordinary 변수인 education 변수에 대해 Ordinal Encoding을 적용하였다.  
+Nominal 변수에 대해서는 Binary Encoding 방식을 선택했었다. 이유는 Binary Encoding 방식은 One-hot encoding 방식보다 더 적은 dummy 변수를 만들어내면서 순차성 정보를 내재하지 않으면서 변환할 수 있기 때문이였으나 몇 번의 테스트 끝에 binary encoding 보다 factor type의 변수를 linear model이 자동으로 dummy variable로 변환해줄 때 모든 모델들에 대해서 약 0.04% 성능향상을 보였다. 어떤 Encdoing 방식이든 최고의 방식은 존재하지 않기에 자동으로 dummy variable을 생성하는 방식을 채택하게 되었다.   
+```{r}
+# y variable을 제외하고 numerical 변수에 대해서 정규화 전처리를 진행
+scale_data <- subset(input_data, select = c(age, fnlwgt, capital.gain, capital.loss, hours.per.week)) 
+boxplot(scale_data)
+
+# Standardization 표준화
+scale <- caret::preProcess(scale_data, method = c("center", "scale"))
+scale_data <- predict(scale, scale_data)
+boxplot(scale_data)
+
+input_data <- input_data %>% select(-age, -fnlwgt, -capital.gain, -capital.loss, -hours.per.week)
+input_data <- cbind(input_data, scale_data)
+input_data$target <- as.numeric(input_data$target)
+rm(scale_data, scale)
+```
+Standardization 표준화는 중심극한 정리와 표준정규분포를 이용하여 각 변수들의 분포를 정규분포에 비슷하게 만들어준다. 해당 전처리 과정은 특히나 선형회귀, 로지스틱회귀에서 유용한 기법이다. 전처리 전, 후 과정을 Box plot을 통해 확인하였고 분포의 변화를 확인할 수 있다.
+
+<br/>
+
+# Data Split 
+모델 구축과 학습에 앞서 전체 데이터를 8:2의 비율로 학습/테스트 데이터로 분합한다. 
+
+**15,081 rows X 30 cols**  
+
+- Train data : 12,065 rows 
+  - train_data
+- Test data : 3,016 rows
+  - test_data
+
+``` {r}
+set.seed(2020)
+test_id <- sample(1:nrow(input_data), round(nrow(input_data)*0.20))
+train_data <- input_data[-test_id, ]
+test_data <- input_data[test_id, ]
+
+print("Training: ", str(nrow(train_data))) # train data 개수
+print("Test: ", str(nrow(test_data)))      # test data 개수
+```
+
+<br/>
+
+# Modeling 
+분할한 데이터를 가지고 모든 변수들을 사용하는 모델과 Heuristic method의 feature selection을 적용한 모델들을 최종적으로 비교할 예정이다.  
+모든 모델들은 동일한 전처리 과정을 거쳤고 같은 데이터를 이용하여 학습 및 테스트 하였으며 최종적으로 4가지의 모델이 구축되었다. 각 모델의 평가지표는 다음과 같이 요약할 수 있다. 자세항 사항은 코드와 함께 밑에서 확인할 수 있다. 
+
+**Simple Logistic Linear Regression**
+
+- no feature selection, 모든 변수 활용 
+- target ~  all variable 
+- ACC 0.840
+- Recall 0.72 
+- Precision 0.61
+- F1 score 0.66
+
+**Forward Selection Logistic Linear Regression**
+
+- forward selection
+- target ~  relationship, occupation, capital.gain, education, hours.per.week, capital.loss, age, sex, marital, workclass, race, fnlwgt
+- ACC 0.842
+- Recall 0.72
+- Precision 0.61
+- F1 score 0.66
+
+**Backward Elimination Logistic Linear Regression**
+
+- backward elimination 
+- target ~  workclass, education, marital, occupation, relationship, race, sex, age, fnlwgt, capital.gain, capital.loss, hours.per.week
+- ACC 0.842
+- Recall 0.72
+- Precision 0.61
+- F1 score 0.66
+
+**Stepwise Selection Logistic Linear Regression**
+
+- stepwise selection 
+- target ~  workclass, education, marital, occupation, relationship, race, sex, age, fnlwgt, capital.gain, capital.loss, hourse.per.week
+- ACC 0.842
+- Recall 0.72
+- Precision 0.61
+- F1 score 0.66
+
+## Model 1 : No feature selection 
+가장 기본적인 전처리를 이정도로 진행하고 feature selection 작업을 하지 않은 채 모든 변수들을 학습하는 Multivariate Logistic Regression model을 구축한다. 추후 feature selection 과정을 거친 모델과 다른 Heuristic method를 적용한 모델들을 비교할 예정이다. 
+```{r ,warning=F}
+# Training 
+model_multi <- glm(target ~ ., data =train_data)
+summary(model_multi)
+
+perf_eval <- function(cm){
+  # true positive rate
+  TPR = Recall = cm[2,2]/sum(cm[2,])
+  # precision
+  Precision = cm[2,2]/sum(cm[,2])
+  # true negative rate
+  TNR = cm[1,1]/sum(cm[1,])
+  # accuracy
+  ACC = sum(diag(cm)) / sum(cm)
+  # balance corrected accuracy (geometric mean)
+  BCR = sqrt(TPR*TNR)
+  # f1 measure
+  F1 = 2 * Recall * Precision / (Recall + Precision)
+  
+  re <- data.frame(TPR = TPR,
+                   Precision = Precision,
+                   TNR = TNR,
+                   ACC = ACC,
+                   BCR = BCR,
+                   F1 = F1)
+  return(re)
+}
+
+# prediction
+pred_prob <- predict(model_multi, test_data, type="response")
+pred_class <- rep(0, nrow(test_data))
+pred_class[pred_prob > 0.3] <- 1 
+cm <- table(pred=pred_class, actual=test_data$target)
+# ACC, Recall, Precision, F1 score 
+perf_eval(cm)
+```
+모든 변수에 대해서 p-value를 비교해보았을 때 대체적으로 유의미하게 나왔으나, race 변수에 대해서는 p-value 값들이 모두 최소 0.2를 넘어서므로 변수들 중 가장 설명력이 없을 것이라고 추론된다.  
+Classification 문제의 대표적인 4가지 평가 척도인 Accuracy, Precision(정밀도, 분류한 것 중 실제 True인 비율), Recall(재현율, 실제 True인 것 중 모델이 True로 예측한 비율), F1 score(조화평균)로 모델의 성능을 평가하였다. 전체 Acc는 84%이고 Recall 보다 Precision이 더 떨어진다. 이는 모델이 실제 True 인 것 중 True를 맞춘 확률은 높지만 상대적으로 모델이 True라고 분류한 것 중 실제 True인 것은 떨어진다는 의미이다. 이 두 지표는 trade-off 관계이므로 현재 cut-off parameter 값을 0.5로 두었지만 이를 만약 0.3 정도로 낮게 잡으면 precision은 높아지지만 recall값은 떨어진다. 다른 모델들과의 동등한 비교를 위해서 cut-off 값은 0.5로 고정하였다. 
+
+## Model 2 : Forward Selection 
+변수를 하나씩 추가해가면서 중요 변수를 선택하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training 
+model_fwd <- step(glm(target ~ 1, train_data, 
+                      family = binomial()), 
+                  direction = "forward", trace = 0,
+                  scope = formula(model_multi))
+summary(model_fwd)
+
+# Prediction 
+pred_prob <- predict(model_fwd, test_data, type="response")
+pred_class <- rep(0, nrow(test_data))
+pred_class[pred_prob > 0.5] <- 1
+cm <- table(pred=pred_class, actual=test_data$target)
+# ACC, Recall, Precision, F1 score 
+perf_eval(cm)
+```
+종속 변수 y에 유의미한 변수를 추가해가는 과정으로 학습모델을 구축한 결과 native.country 변수가 탈락하였다. native.country 변수가 가지는 label의 개수가 많아서 유의미한 영향을 주기 어려웠다고 추론된다.  
+평가 지표를 확인하였을 때, 이전 모델과 큰 차이를 보이지는 않았다. 그러나 Accuracy 측면에서 약 0.002 % 상승을 보이고 있다. 이는 더 적은 모델로 소폭의 정확도 상승을 보이고 있다고 볼 수 있다. 
+
+## Model 3 : Backward Elimination 
+유의미하지 않은 변수를 하나씩 제거해가면서 중요 변수를 선택하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training
+model_bwd <- step(glm(target ~ ., train_data, 
+                      family = binomial()), 
+                  direction = "backward", trace = 0,
+                  scope = list(lower=target ~ 1, upper = formula(model_multi)))
+summary(model_bwd)
+
+# Prediction 
+pred_prob <- predict(model_bwd, test_data, type="response")
+pred_class <- rep(0, nrow(test_data))
+pred_class[pred_prob > 0.5] <- 1
+cm <- table(pred=pred_class, actual=test_data$target)
+# ACC, Recall, Precision, F1 score 
+perf_eval(cm)
+```
+종속 변수 y에 유의미한 변수만을 남겨가는 과정으로 학습모델을 구축한 결과 최종적으로 native.country 변수만 탈락하였다. 역시나 native.country 변수가 가지는 label의 개수가 많아서 유의미한 영향을 주기 어려웠다고 판단한 것으로 추론된다.  
+평가 지표를 확인하였을 때, 처음 모델과 큰 차이를 보이지는 않았다. 그러나 Accuracy 측면에서 약 0.002 % 상승을 보이고 있다. 이 또한 더 적은 모델로 소폭의 정확도 상승을 보이고 있다고 볼 수 있다.
+
+## Model 4 : Stepwise Selection 
+앞선 forward selection 과 backward elimination 방법을 번갈아가면서 수행하는 방법으로 학습 모델을 구축하고 평가해보았다. 
+``` {r ,warning=F}
+# Training
+model_step <- step(glm(target ~ ., train_data,
+                       family = binomial()), direction = "both", trace = 0,
+                  scope = list(lower=target ~ 1, upper = formula(model_multi)))
+summary(model_step)
+
+# Prediction
+pred_prob <- predict(model_step, test_data, type="response")
+pred_class <- rep(0, nrow(test_data))
+pred_class[pred_prob > 0.5] <- 1
+cm <- table(pred=pred_class, actual=test_data$target)
+# ACC, Recall, Precision, F1 score 
+perf_eval(cm)
+```
+종속 변수 y에 유의미한 변수만을 남겨가는 과정으로 학습모델을 구축한 결과 역시나 최종적으로 native.country 변수가 탈락하였다. 이로써 모든 방법론들에서 **native.country 변수를 가장 유의미하지 못한 변수로 선정하였음을 알 수 있다.** 
+평가 지표 또한 앞선 방식들의 모델들과 동일하다. 
+
+# Evaluation 
+
+## ANOVA 
+다중 선형 회귀 모델간의 비교를 위해서 ANOVA 진행하여 분산의 차이가 있는지 가설 검정을 진행하였다. 여기서 평균을 비교하지 않고 분산을 비교한 이유는 평균이 아니라 얼마나 퍼져있는지 보는게 더 중요하기 때문이다.
+``` {r, warning=F}
+anova(model_multi, model_fwd, test="Chisq")
+anova(model_multi, model_bwd, test="Chisq")
+anova(model_multi, model_step, test="Chisq")
+```
+모든 변수들을 넣었을 때와 feature selection을 통해 natvie.country 변수를 제외하고 학습한 모델간의 비교를 진행하였다. 모든 결과들에서 변수를 제거하고 학습한 모델이 p-value가 0.001보다 작으므로 더 유의미하다고 나타내고 있다. 이는 즉 더 적은 변수를 이용하였을 때 오히려 성능이 향상하였음을 알 수 있다. 그리고 이때 가장 유의미하지 못한 변수는 native.country, 즉 국적이 수입에 주는 영향이 거의 없다고 볼 수 있다.  
+그렇지만 정확도 상으로는 모든 모델들이 84% 이상의 수치를 보여주므로 모두 괜찮은 모델들이지만 더 적은 변수를 사용함에도 성능의 변화가 거의 없거나 혹은 더 좋아진다는 것은 정규성 측면에서도 더 뛰어날 것으로 예상된다. 
